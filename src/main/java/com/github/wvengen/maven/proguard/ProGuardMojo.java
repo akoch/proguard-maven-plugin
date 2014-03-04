@@ -30,6 +30,7 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.project.MavenProjectHelper;
+import org.apache.tools.ant.BuildException;
 import org.apache.tools.ant.DefaultLogger;
 import org.apache.tools.ant.Project;
 import org.apache.tools.ant.taskdefs.Java;
@@ -417,6 +418,7 @@ public class ProGuardMojo extends AbstractMojo {
 			}
 		}
 
+		Collection<String> libraryJars = new HashSet<String>();
 		Set<String> inPath = new HashSet<String>();
 		boolean hasInclusionLibrary = false;
 		if (assembly != null) {
@@ -444,8 +446,7 @@ public class ProGuardMojo extends AbstractMojo {
 					// This may not be CompileArtifacts, maven 2.0.6 bug
 					File file = getClasspathElement(getDependancy(inc, mavenProject), mavenProject);
 					inPath.add(file.toString());
-					args.add("-libraryjars");
-					args.add(fileToString(file));
+					libraryJars.add(fileToString(file));
 				}
 			}
 		}
@@ -492,12 +493,11 @@ public class ProGuardMojo extends AbstractMojo {
 				if(includeDependencyInjar){
 					log.debug("--- ADD library as injars:" + artifact.getArtifactId());
 					args.add("-injars");
+					args.add(fileToString(file));
 				} else {
 					log.debug("--- ADD libraryjars:" + artifact.getArtifactId());
-					args.add("-libraryjars");
-
+					libraryJars.add(fileToString(file));
 				}
-				args.add(fileToString(file));
 			}
 		}
 
@@ -523,8 +523,7 @@ public class ProGuardMojo extends AbstractMojo {
 		if (libs != null) {
 			for (Iterator i = libs.iterator(); i.hasNext();) {
 				Object lib = i.next();
-				args.add("-libraryjars");
-				args.add(fileNameToString(lib.toString()));
+				libraryJars.add(fileNameToString(lib.toString()));
 			}
 		}
 
@@ -545,7 +544,27 @@ public class ProGuardMojo extends AbstractMojo {
 		}
 
 		log.info("execute ProGuard " + args.toString());
-		proguardMain(getProguardJar(this), args, this);
+		try {
+			proguardMain(getProguardJar(this), fillArgsWithLibraries(args, libraryJars), this);
+		} catch (BuildException ex) {
+			if(ex.getCause() instanceof IOException) {
+				log.info("Probably the run command is too long. Therefor the command is shortened and executed again.");
+				Collection<String> resultingLibraries = new HashSet<String>();
+				for (String libraryJar : libraryJars) {
+					int countMatches = StringUtils.countMatches(libraryJar, "jar");
+					int index1 = libraryJar.lastIndexOf('/');
+					int index2 = libraryJar.lastIndexOf('\\');
+					int index = Math.max(index1, index2);
+					if(countMatches <= 1 && index > 0) {
+						resultingLibraries.add(libraryJar.substring(0, index+1)+"'");
+					} else {
+						resultingLibraries.add(libraryJar);
+					}
+				}
+				
+				proguardMain(getProguardJar(this), fillArgsWithLibraries(args, resultingLibraries), this);
+			}
+		}
 
 		if ((assembly != null) && (hasInclusionLibrary)) {
 
@@ -625,6 +644,15 @@ public class ProGuardMojo extends AbstractMojo {
 				// if it can't be closed, it can't be closed ...
 			}
 		}
+	}
+
+	private ArrayList<String> fillArgsWithLibraries(Collection<String> args, Collection<String> libraries) {
+		ArrayList<String> runArgs = new ArrayList<String>(args);
+		for (String libraryJar : libraries) {
+			runArgs.add("-libraryjars");
+			runArgs.add(libraryJar);
+		}
+		return runArgs;
 	}
 
 	private void createIfNecessary(File mappingFile) throws IOException {
