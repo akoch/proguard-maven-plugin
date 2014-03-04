@@ -532,6 +532,12 @@ public class ProGuardMojo extends AbstractMojo {
 		args.add(fileToString(printMappingFile));
 		args.add("-printseeds");
 		args.add(fileToString((new File(outputDirectory, "proguard_seeds.txt").getAbsoluteFile())));
+		args.add("-printconfiguration");
+		args.add(fileToString((new File(outputDirectory, "proguard_conf.txt").getAbsoluteFile())));
+		args.add("-dump");
+		args.add(fileToString((new File(outputDirectory, "proguard_dump.txt").getAbsoluteFile())));
+		args.add("-printusage");
+		args.add(fileToString((new File(outputDirectory, "proguard_usage.txt").getAbsoluteFile())));
 
 		if (log.isDebugEnabled()) {
 			args.add("-verbose");
