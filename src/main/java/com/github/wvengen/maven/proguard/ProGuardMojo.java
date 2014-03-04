@@ -34,8 +34,13 @@ import org.apache.tools.ant.DefaultLogger;
 import org.apache.tools.ant.Project;
 import org.apache.tools.ant.taskdefs.Java;
 import org.codehaus.plexus.archiver.jar.JarArchiver;
+import org.codehaus.plexus.util.StringUtils;
+
 
 import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.net.URL;
 import java.util.*;
 
@@ -54,6 +59,8 @@ import java.util.*;
 
 public class ProGuardMojo extends AbstractMojo {
 
+	public static final String MAPPING_FILE = "obfuscationMap.map";
+	
 	/**
 	 * Set this to 'true' to bypass ProGuard processing entirely.
 	 *
@@ -111,6 +118,13 @@ public class ProGuardMojo extends AbstractMojo {
 	 * @parameter
 	 */
 	private Assembly assembly;
+
+	/**
+	 * Configuration to use unique mappings for classes in a multi module build
+	 * 
+	 * @parameter
+	 */
+	private UniqueMapping uniqueMapping;
 
 	/**
 	 * Additional -libraryjars e.g. ${java.home}/lib/rt.jar Project compile dependency are added automatically. See
@@ -285,6 +299,45 @@ public class ProGuardMojo extends AbstractMojo {
 			return;
 		}
 
+		ArrayList<String> args = new ArrayList<String>();
+		File mappingFile = null;
+		if (uniqueMapping != null) {
+			MavenProject parent = mavenProject.getParent();
+			final int projectIndex;
+			if (parent != null) {
+				File projectFolder = parent.getFile().getParentFile();
+				mappingFile = new File(new File(projectFolder, "target"), MAPPING_FILE);
+				List collectedProjects = parent.getCollectedProjects();
+				projectIndex = collectedProjects == null ? 0 : collectedProjects.indexOf(mavenProject);
+			} else {
+				mappingFile = new File(outputDirectory, MAPPING_FILE);
+				projectIndex = 0;
+			}
+			
+			if (uniqueMapping.onlySubmodules) {
+				if (parent == null) {
+					if(mappingFile.exists()) {
+						// delete existing mapping file here
+						mappingFile.delete();
+					}
+					return;
+				}
+			}
+
+			if(mappingFile.exists()) {
+				args.add("-applymapping");
+				args.add(fileToString(mappingFile));
+			}
+
+			args.add("-flattenpackagehierarchy");
+			
+			StringBuilder packageNameBuilder = new StringBuilder();
+			packageNameBuilder.append(uniqueMapping.packageName);
+			packageNameBuilder.append(".");
+			packageNameBuilder.append(Character.toChars(((char) 'a' + projectIndex)));
+			args.add(packageNameBuilder.toString());
+		}
+
 		boolean mainIsJar = mavenProject.getPackaging().equals("jar");
 
 		File inJarFile = new File(outputDirectory, injar);
@@ -343,8 +396,6 @@ public class ProGuardMojo extends AbstractMojo {
 			}
 			inJarFile = baseFile;
 		}
-
-		ArrayList<String> args = new ArrayList<String>();
 
 		if (log.isDebugEnabled()) {
 			@SuppressWarnings("unchecked")
@@ -478,8 +529,8 @@ public class ProGuardMojo extends AbstractMojo {
 		}
 
 		args.add("-printmapping");
-		args.add(fileToString((new File(outputDirectory, "proguard_map.txt").getAbsoluteFile())));
-
+		File printMappingFile = new File(outputDirectory, "proguard_map.txt").getAbsoluteFile();
+		args.add(fileToString(printMappingFile));
 		args.add("-printseeds");
 		args.add(fileToString((new File(outputDirectory, "proguard_seeds.txt").getAbsoluteFile())));
 
@@ -548,6 +599,39 @@ public class ProGuardMojo extends AbstractMojo {
 				projectHelper.attachArtifact(mavenProject, attachArtifactType, attachArtifactClassifier, outJarFile);
 			} else {
 				projectHelper.attachArtifact(mavenProject, attachArtifactType, null, outJarFile);
+			}
+		}
+		
+		// append new mappings to existing mapping file
+		FileReader mappingReader = null;
+		FileWriter mappingWriter = null;
+		try {
+			createIfNecessary(mappingFile);
+		
+			mappingWriter = new FileWriter(mappingFile, true);
+			mappingReader = new FileReader(printMappingFile);
+			
+			int input;
+			while( (input = mappingReader.read() ) != -1) {
+				mappingWriter.write(input);
+			}
+		} catch (IOException e) {
+			throw new MojoExecutionException("Unable to create mapping file", e);
+		} finally {
+			try {
+				mappingWriter.close();
+				mappingReader.close();
+			} catch (IOException e) {
+				// if it can't be closed, it can't be closed ...
+			}
+		}
+	}
+
+	private void createIfNecessary(File mappingFile) throws IOException {
+		if(mappingFile != null) {
+			if (!mappingFile.exists()) {
+				mappingFile.getParentFile().mkdirs();
+				mappingFile.createNewFile();
 			}
 		}
 	}
@@ -704,7 +788,11 @@ public class ProGuardMojo extends AbstractMojo {
 			return artifact.getFile();
 		}
 		String refId = artifact.getGroupId() + ":" + artifact.getArtifactId();
-		MavenProject project = (MavenProject) mavenProject.getProjectReferences().get(refId);
+		String refIdWithVersion = refId  + ":" + artifact.getVersion();
+		MavenProject project = (MavenProject) mavenProject.getProjectReferences().get(refIdWithVersion);
+		if(project == null) {
+			 project = (MavenProject) mavenProject.getProjectReferences().get(refId);
+		}
 		if (project != null) {
 			return new File(project.getBuild().getOutputDirectory());
 		} else {
