@@ -571,6 +571,8 @@ public class ProGuardMojo extends AbstractMojo {
 				proguardMain(getProguardJar(this), fillArgsWithLibraries(args, resultingLibraries), this);
 			}
 		}
+		
+		new FixAfterObfuscation(getLog()).process(outJarFile, printMappingFile);
 
 		if ((assembly != null) && (hasInclusionLibrary)) {
 
